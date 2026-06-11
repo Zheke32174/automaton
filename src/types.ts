@@ -24,12 +24,23 @@ export interface AutomatonIdentity {
 }
 
 export interface WalletData {
-  privateKey?: `0x${string}`;
-  /** Base58-encoded 64-byte Ed25519 secret key (Solana wallets). */
+  /**
+   * EVM private key. When `encrypted` is true this holds an iv:tag:ciphertext
+   * envelope (see src/identity/keystore.ts) instead of the raw 0x... key.
+   */
+  privateKey?: `0x${string}` | string;
+  /** Base58-encoded 64-byte Ed25519 secret key (Solana wallets). When
+   * `encrypted` is true this is the iv:tag:ciphertext envelope. */
   secretKey?: string;
   createdAt: string;
   /** Chain type for this wallet. Missing = "evm" for backward compat. */
   chainType?: ChainType;
+  /** When true, the privateKey / secretKey field above holds an iv:tag:ciphertext
+   * envelope decryptable only with AUTOMATON_MASTER_PASSWORD. Missing = legacy
+   * plaintext (existing behavior). */
+  encrypted?: boolean;
+  /** Keystore envelope format version. Currently always 1 when set. */
+  encryptionVersion?: number;
 }
 
 export interface ProvisionResult {

@@ -17,6 +17,13 @@ import type { WalletData } from "../types.js";
 import type { ChainType } from "./chain.js";
 import { EvmChainIdentity, SolanaChainIdentity } from "./chain.js";
 import type { ChainIdentity } from "./chain.js";
+import {
+  encryptString,
+  decryptString,
+  getMasterPassword,
+  looksEncrypted,
+  KEYSTORE_VERSION,
+} from "./keystore.js";
 
 /**
  * Create a stub PrivateKeyAccount for Solana wallets.
@@ -91,14 +98,20 @@ export async function getWallet(chainType?: ChainType): Promise<{
     const resolvedChainType = walletData.chainType || "evm";
 
     if (resolvedChainType === "solana" && walletData.secretKey) {
-      const secretKey = bs58.decode(walletData.secretKey);
+      const secretKeyB58 = walletData.encrypted
+        ? decryptString(walletData.secretKey, getMasterPassword())
+        : walletData.secretKey;
+      const secretKey = bs58.decode(secretKeyB58);
       const solanaIdentity = new SolanaChainIdentity(secretKey);
       const account = createSolanaStubAccount(solanaIdentity.address);
       return { account, chainIdentity: solanaIdentity, chainType: "solana", isNew: false };
     }
 
     // EVM path (default)
-    const account = privateKeyToAccount(walletData.privateKey!);
+    const privateKey = walletData.encrypted
+      ? (decryptString(walletData.privateKey as string, getMasterPassword()) as `0x${string}`)
+      : (walletData.privateKey as `0x${string}`);
+    const account = privateKeyToAccount(privateKey);
     return { account, chainIdentity: new EvmChainIdentity(account), chainType: "evm", isNew: false };
   }
 
@@ -142,6 +155,8 @@ export async function getWallet(chainType?: ChainType): Promise<{
 
 /**
  * Get the wallet address without loading the full account.
+ * For encrypted wallets this still needs the master password — the address
+ * is derived from the (encrypted) private key.
  */
 export function getWalletAddress(): string | null {
   if (!fs.existsSync(WALLET_FILE)) {
@@ -153,18 +168,25 @@ export function getWalletAddress(): string | null {
   );
 
   if (walletData.chainType === "solana" && walletData.secretKey) {
-    const secretKey = bs58.decode(walletData.secretKey);
+    const secretKeyB58 = walletData.encrypted
+      ? decryptString(walletData.secretKey, getMasterPassword())
+      : walletData.secretKey;
+    const secretKey = bs58.decode(secretKeyB58);
     const keypair = nacl.sign.keyPair.fromSecretKey(secretKey);
     return bs58.encode(keypair.publicKey);
   }
 
-  const account = privateKeyToAccount(walletData.privateKey!);
+  const privateKey = walletData.encrypted
+    ? (decryptString(walletData.privateKey as string, getMasterPassword()) as `0x${string}`)
+    : (walletData.privateKey as `0x${string}`);
+  const account = privateKeyToAccount(privateKey);
   return account.address;
 }
 
 /**
  * Load the full wallet account (needed for signing).
  * For Solana wallets, returns a proxy account.
+ * For encrypted wallets this requires AUTOMATON_MASTER_PASSWORD.
  */
 export function loadWalletAccount(): PrivateKeyAccount | null {
   if (!fs.existsSync(WALLET_FILE)) {
@@ -180,7 +202,10 @@ export function loadWalletAccount(): PrivateKeyAccount | null {
     return null;
   }
 
-  return privateKeyToAccount(walletData.privateKey!);
+  const privateKey = walletData.encrypted
+    ? (decryptString(walletData.privateKey as string, getMasterPassword()) as `0x${string}`)
+    : (walletData.privateKey as `0x${string}`);
+  return privateKeyToAccount(privateKey);
 }
 
 /**
@@ -197,6 +222,106 @@ export function getWalletChainType(): ChainType {
     return walletData.chainType || "evm";
   } catch {
     return "evm";
+  }
+}
+
+/**
+ * Migrate a plaintext wallet to the AES-256-GCM keystore format.
+ *
+ * Idempotent: if the wallet is already encrypted, returns { migrated: false }
+ * without touching the file. Backs up the prior file to
+ * wallet.json.preEncrypt.<unix-ts>.bak before rewriting.
+ *
+ * The operator must persist AUTOMATON_MASTER_PASSWORD before the next start;
+ * if the password is lost the wallet is unrecoverable from the encrypted file
+ * alone (the backup retains the plaintext form so recovery is possible from
+ * an offsite copy of that backup — handle it like any other secret).
+ */
+export function migrateWalletToEncrypted(passphrase: string): {
+  migrated: boolean;
+  walletFile: string;
+  backupFile?: string;
+} {
+  if (!fs.existsSync(WALLET_FILE)) {
+    throw new Error(`no wallet to migrate at ${WALLET_FILE}`);
+  }
+  if (!passphrase || passphrase.length < 8) {
+    throw new Error("passphrase must be at least 8 characters");
+  }
+  const walletData: WalletData = JSON.parse(
+    fs.readFileSync(WALLET_FILE, "utf-8"),
+  );
+  if (walletData.encrypted) {
+    return { migrated: false, walletFile: WALLET_FILE };
+  }
+
+  const backupFile = `${WALLET_FILE}.preEncrypt.${Math.floor(Date.now() / 1000)}.bak`;
+  fs.copyFileSync(WALLET_FILE, backupFile);
+  // Defensive: the backup still holds plaintext, so lock it down. The wallet
+  // file itself was already mode 0o600; mirror that on the backup.
+  fs.chmodSync(backupFile, 0o600);
+
+  const next: WalletData = {
+    ...walletData,
+    encrypted: true,
+    encryptionVersion: KEYSTORE_VERSION,
+  };
+
+  if (walletData.chainType === "solana" && walletData.secretKey) {
+    next.secretKey = encryptString(walletData.secretKey, passphrase);
+  } else if (walletData.privateKey) {
+    next.privateKey = encryptString(walletData.privateKey, passphrase);
+  } else {
+    throw new Error("wallet has neither privateKey nor secretKey to encrypt");
+  }
+
+  fs.writeFileSync(WALLET_FILE, JSON.stringify(next, null, 2), { mode: 0o600 });
+  return { migrated: true, walletFile: WALLET_FILE, backupFile };
+}
+
+/**
+ * Reverse migration — only useful as an emergency recovery tool. Will throw
+ * if the passphrase is wrong (the GCM auth tag will fail validation).
+ */
+export function decryptWalletToPlaintext(passphrase: string): {
+  decrypted: boolean;
+  walletFile: string;
+  backupFile?: string;
+} {
+  if (!fs.existsSync(WALLET_FILE)) {
+    throw new Error(`no wallet at ${WALLET_FILE}`);
+  }
+  const walletData: WalletData = JSON.parse(
+    fs.readFileSync(WALLET_FILE, "utf-8"),
+  );
+  if (!walletData.encrypted) {
+    return { decrypted: false, walletFile: WALLET_FILE };
+  }
+  const backupFile = `${WALLET_FILE}.encrypted.${Math.floor(Date.now() / 1000)}.bak`;
+  fs.copyFileSync(WALLET_FILE, backupFile);
+  fs.chmodSync(backupFile, 0o600);
+  const next: WalletData = { ...walletData };
+  delete next.encrypted;
+  delete next.encryptionVersion;
+  if (walletData.chainType === "solana" && walletData.secretKey) {
+    next.secretKey = decryptString(walletData.secretKey, passphrase);
+  } else if (walletData.privateKey) {
+    next.privateKey = decryptString(walletData.privateKey as string, passphrase) as `0x${string}`;
+  }
+  fs.writeFileSync(WALLET_FILE, JSON.stringify(next, null, 2), { mode: 0o600 });
+  return { decrypted: true, walletFile: WALLET_FILE, backupFile };
+}
+
+/** Is the on-disk wallet encrypted? Cheap check that doesn't need the password. */
+export function isWalletEncrypted(): boolean {
+  if (!fs.existsSync(WALLET_FILE)) return false;
+  try {
+    const walletData: WalletData = JSON.parse(
+      fs.readFileSync(WALLET_FILE, "utf-8"),
+    );
+    return walletData.encrypted === true;
+  } catch {
+    return false;
   }
 }
 
