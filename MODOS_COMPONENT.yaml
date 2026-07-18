@@ -1,0 +1,38 @@
+apiVersion: modos.pleiades/v1alpha1
+kind: Component
+metadata:
+  name: automaton-agent-runtime-patterns
+  repository: Zheke32174/automaton
+  visibility: public
+  lifecycle: experimental
+  defaultBranch: main
+spec:
+  roles:
+    - agent-runtime-patterns
+    - automation-research
+    - workflow-adapter-source
+  authority: proposal
+  inputs:
+    - objectives
+    - tools
+    - workflow-state
+    - evaluation-evidence
+  outputs:
+    - automation-plans
+    - workflow-candidates
+    - runtime-patterns
+  capabilitiesProvided:
+    - workflow.plan
+    - agent.runtime.propose
+    - automation.pattern.export
+  capabilitiesRequired:
+    - workspace.isolated
+    - tool.call.proposed
+    - evaluation.record
+  dataClasses:
+    - public
+    - internal
+    - untrusted
+  failurePolicy: quarantine
+  promotionPolicy: evidence-gated
+  notes: Automaton contributes patterns and candidate workflows; execution authority remains external and capability-gated.
