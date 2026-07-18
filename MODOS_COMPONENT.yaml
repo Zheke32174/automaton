@@ -4,35 +4,36 @@ metadata:
   name: automaton-agent-runtime-patterns
   repository: Zheke32174/automaton
   visibility: public
-  lifecycle: experimental
+  lifecycle: reference
   defaultBranch: main
+  labels:
+    upstreamRepository: Conway-Research/automaton
+    integrationMode: pattern-mining-only
 spec:
   roles:
-    - agent-runtime-patterns
-    - automation-research
-    - workflow-adapter-source
-  authority: proposal
+    - agent-runtime-pattern-reference
+    - automation-research-corpus
+    - workflow-adapter-candidate-source
+  authority: none
   inputs:
-    - objectives
-    - tools
-    - workflow-state
-    - evaluation-evidence
+    - reviewed-source-snapshots
+    - upstream-release-metadata
+    - security-review-evidence
   outputs:
-    - automation-plans
-    - workflow-candidates
-    - runtime-patterns
+    - extracted-runtime-patterns
+    - threat-model-notes
+    - adapter-candidates
   capabilitiesProvided:
-    - workflow.plan
-    - agent.runtime.propose
-    - automation.pattern.export
+    - automation.pattern.reference
+    - agent.runtime.pattern.reference
   capabilitiesRequired:
+    - artifact.read
     - workspace.isolated
-    - tool.call.proposed
     - evaluation.record
   dataClasses:
     - public
     - internal
     - untrusted
-  failurePolicy: quarantine
-  promotionPolicy: evidence-gated
-  notes: Automaton contributes patterns and candidate workflows; execution authority remains external and capability-gated.
+  failurePolicy: non-operational
+  promotionPolicy: never-promote
+  notes: This fork is executable upstream runtime source with shell, wallet, self-modification, replication, and external-service surfaces. MODOS may inspect it as untrusted reference material, but must not launch or promote this repository directly. Useful mechanisms require clean, bounded adapters that pass isolated evaluation and separate governed promotion.
