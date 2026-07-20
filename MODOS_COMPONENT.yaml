@@ -6,6 +6,9 @@ metadata:
   visibility: public
   lifecycle: experimental
   defaultBranch: main
+  labels:
+    modos.pleiades/subsystem: cognition-memory
+    modos.pleiades/organ-class: agent-framework
 spec:
   roles:
     - agent-runtime-patterns
@@ -13,8 +16,8 @@ spec:
     - workflow-adapter-source
   authority: proposal
   inputs:
-    - objectives
-    - tools
+    - steward-scoped-objectives
+    - bounded-tools
     - workflow-state
     - evaluation-evidence
   outputs:
@@ -22,17 +25,31 @@ spec:
     - workflow-candidates
     - runtime-patterns
   capabilitiesProvided:
-    - workflow.plan
-    - agent.runtime.propose
-    - automation.pattern.export
+    - workflow.plan@v1
+    - agent.runtime.propose@v1
+    - automation.pattern.export@v1
   capabilitiesRequired:
-    - workspace.isolated
-    - tool.call.proposed
-    - evaluation.record
+    - workspace.isolated@v1
+    - tool.call.proposed@v1
+    - evaluation.record@v1
+    - governance.contract.validate@v1alpha1
   dataClasses:
     - public
     - internal
     - untrusted
   failurePolicy: quarantine
   promotionPolicy: evidence-gated
-  notes: Automaton contributes patterns and candidate workflows; execution authority remains external and capability-gated.
+  relations:
+    - type: governed-by
+      targetRef: repo:Zheke32174/pleiades
+      scope: governance
+      required: true
+    - type: supports
+      targetRef: repo:Zheke32174/understory
+      scope: build
+      required: false
+  notes: >-
+    Automaton contributes patterns and candidate workflows; execution authority
+    remains external and capability-gated. This update preserves the existing
+    identity while aligning capability identifiers and typed relations with the
+    promoted ecology schema.
